@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
   <meta charset="UTF-8">
-  <title>Aproveitamento de Área - Alta Resolução (300 DPI)</title>
+  <title>Aproveitamento de Área - Múltiplas Imagens (300 DPI)</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
   <style>
     body {
@@ -34,6 +34,45 @@
       border: 1px solid #ccc;
       border-radius: 4px;
     }
+    
+    /* Area de lista de imagens */
+    .image-list-container {
+      grid-column: 1 / -1;
+      background: #fafafa;
+      border: 1px solid #e0e0e0;
+      border-radius: 6px;
+      padding: 15px;
+      margin-top: 5px;
+    }
+    .image-item {
+      display: grid;
+      grid-template-columns: 60px 1fr 120px 120px 100px 40px;
+      gap: 10px;
+      align-items: center;
+      background: #fff;
+      padding: 8px 12px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      margin-bottom: 8px;
+    }
+    .image-item img {
+      width: 50px;
+      height: 50px;
+      object-fit: contain;
+      background: #eee;
+      border-radius: 4px;
+    }
+    .image-item .remove-btn {
+      background: #dc3545;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      padding: 6px;
+      cursor: pointer;
+      font-weight: bold;
+      text-align: center;
+    }
+
     .button-group {
       grid-column: 1 / -1;
       display: flex;
@@ -88,12 +127,12 @@
 </head>
 <body>
 
-  <h2>Aproveitamento de Área (Renderização 300 DPI)</h2>
+  <h2>Aproveitamento de Área - Múltiplos Arquivos (300 DPI)</h2>
 
   <div class="controls">
     <div class="input-group">
-      <label>Imagem (Upload):</label>
-      <input type="file" id="imageInput" accept="image/*">
+      <label>Adicionar Imagens (Upload Múltiplo):</label>
+      <input type="file" id="imageInput" accept="image/*" multiple>
     </div>
     <div class="input-group">
       <label>Largura do Painel (cm):</label>
@@ -104,25 +143,17 @@
       <input type="number" id="panelH" value="100" min="1">
     </div>
     <div class="input-group">
-      <label>Largura da Imagem (cm):</label>
-      <input type="number" id="imgW" value="15" step="0.1" min="0.1">
-    </div>
-    <div class="input-group">
-      <label>Altura da Imagem (cm):</label>
-      <input type="number" id="imgH" value="10" step="0.1" min="0.1" disabled style="background:#eee;">
-    </div>
-    <div class="input-group">
       <label>Espaçamento entre imagens (cm):</label>
       <input type="number" id="spacing" value="0.5" step="0.1" min="0">
     </div>
-    <div class="input-group">
-      <label>Orientação da Imagem:</label>
-      <select id="orientationMode">
-        <option value="auto">Automática (Qual couber mais por linha)</option>
-        <option value="original">Original (Sem rotação)</option>
-        <option value="rotate">Rotacionar 90°</option>
-      </select>
+
+    <div class="image-list-container">
+      <strong>Fila de Arquivos Carregados:</strong>
+      <div id="imageList" style="margin-top: 10px;">
+        <span style="color: #777; font-size: 0.9em;">Nenhuma imagem adicionada.</span>
+      </div>
     </div>
+
     <div class="button-group">
       <button onclick="calculateAndDraw()">1. Calcular e Visualizar</button>
       <button class="export-btn" onclick="exportPNG()">2. Baixar PNG (300 DPI)</button>
@@ -130,106 +161,211 @@
     </div>
   </div>
 
-  <div class="stats" id="stats">Faça o upload de uma imagem para começar.</div>
+  <div class="stats" id="stats">Adicione uma ou mais imagens para começar.</div>
 
   <div id="canvas-container">
     <canvas id="previewCanvas"></canvas>
   </div>
 
   <script>
-    let rawImage = null;
-    let originalAspectRatio = 1;
+    let imageItems = []; // Array que armazena os dados de cada imagem carregada
     let currentPlacedData = [];
-
-    // Densidade de pixels para exportação em qualidade gráfica (300 DPI = ~118.11 px/cm)
     const DPI_300_PX_PER_CM = 300 / 2.54;
 
     document.getElementById('imageInput').addEventListener('change', function(e) {
-      const file = e.target.files[0];
-      if (!file) return;
+      const files = Array.from(e.target.files);
+      if (!files.length) return;
 
-      const reader = new FileReader();
-      reader.onload = function(event) {
-        rawImage = new Image();
-        rawImage.onload = function() {
-          originalAspectRatio = rawImage.width / rawImage.height;
-          updateImgHeight();
+      files.forEach(file => {
+        const reader = new FileReader();
+        reader.onload = function(event) {
+          const img = new Image();
+          img.onload = function() {
+            const aspectRatio = img.width / img.height;
+            const defaultW = 15; // Largura padrão em cm
+            const defaultH = defaultW / aspectRatio;
+
+            imageItems.push({
+              id: Date.now() + Math.random(),
+              file: img,
+              name: file.name,
+              aspectRatio: aspectRatio,
+              widthCm: defaultW,
+              heightCm: defaultH,
+              quantity: 0 // 0 = Repetir infinitamente até encher o painel
+            });
+
+            renderImageList();
+          };
+          img.src = event.target.result;
         };
-        rawImage.src = event.target.result;
-      };
-      reader.readAsDataURL(file);
+        reader.readAsDataURL(file);
+      });
+
+      // Limpa o input de arquivo para permitir reenviar o mesmo arquivo se necessário
+      this.value = '';
     });
 
-    document.getElementById('imgW').addEventListener('input', updateImgHeight);
+    function renderImageList() {
+      const container = document.getElementById('imageList');
+      if (imageItems.length === 0) {
+        container.innerHTML = '<span style="color: #777; font-size: 0.9em;">Nenhuma imagem adicionada.</span>';
+        return;
+      }
 
-    function updateImgHeight() {
-      const w = parseFloat(document.getElementById('imgW').value);
-      if (w && originalAspectRatio) {
-        const h = w / originalAspectRatio;
-        document.getElementById('imgH').value = h.toFixed(2);
+      container.innerHTML = '';
+      imageItems.forEach((item, index) => {
+        const div = document.createElement('div');
+        div.className = 'image-item';
+        div.innerHTML = `
+          <img src="${item.file.src}">
+          <span style="font-size:0.85em; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${item.name}">${item.name}</span>
+          <div class="input-group">
+            <label style="font-size:0.75em;">Largura (cm):</label>
+            <input type="number" value="${item.widthCm}" step="0.1" min="0.1" onchange="updateItemWidth(${index}, this.value)">
+          </div>
+          <div class="input-group">
+            <label style="font-size:0.75em;">Altura (cm):</label>
+            <input type="number" value="${item.heightCm.toFixed(2)}" disabled style="background:#eee;">
+          </div>
+          <div class="input-group">
+            <label style="font-size:0.75em;">Qtd (0 = Infinito):</label>
+            <input type="number" value="${item.quantity}" min="0" onchange="updateItemQuantity(${index}, this.value)">
+          </div>
+          <button class="remove-btn" onclick="removeItem(${index})">X</button>
+        `;
+        container.appendChild(div);
+      });
+    }
+
+    function updateItemWidth(index, val) {
+      const w = parseFloat(val);
+      if (w && w > 0) {
+        imageItems[index].widthCm = w;
+        imageItems[index].heightCm = w / imageItems[index].aspectRatio;
+        renderImageList();
       }
     }
 
+    function updateItemQuantity(index, val) {
+      const q = parseInt(val, 10);
+      if (!isNaN(q) && q >= 0) {
+        imageItems[index].quantity = q;
+      }
+    }
+
+    function removeItem(index) {
+      imageItems.splice(index, 1);
+      renderImageList();
+    }
+
     function calculateAndDraw() {
-      if (!rawImage) {
-        alert("Por favor, selecione uma imagem primeiro.");
+      if (imageItems.length === 0) {
+        alert("Por favor, adicione pelo menos uma imagem.");
         return;
       }
 
       const pW = parseFloat(document.getElementById('panelW').value);
       const pH = parseFloat(document.getElementById('panelH').value);
-      const iW = parseFloat(document.getElementById('imgW').value);
-      const iH = parseFloat(document.getElementById('imgH').value);
       const gap = parseFloat(document.getElementById('spacing').value);
-      const mode = document.getElementById('orientationMode').value;
 
-      if (!pW || !pH || !iW || !iH) return;
+      if (!pW || !pH) return;
 
-      currentPlacedData = packRowByRow(pW, pH, iW, iH, gap, mode);
+      currentPlacedData = packMultipleRowByRow(pW, pH, gap);
 
-      // Renderiza apenas na escala leve de tela para pré-visualização
       renderCanvas(document.getElementById('previewCanvas'), pW, pH, currentPlacedData, false);
 
       const totalArea = pW * pH;
-      const usedArea = currentPlacedData.length * (iW * iH);
+      let usedArea = 0;
+      currentPlacedData.forEach(item => {
+        usedArea += item.w * item.h;
+      });
       const efficiency = ((usedArea / totalArea) * 100).toFixed(1);
 
       document.getElementById('stats').innerText = 
         `Total de imagens encaixadas: ${currentPlacedData.length} unidade(s) | Aproveitamento da área: ${efficiency}%`;
     }
 
-    function packRowByRow(mW, mH, iW, iH, gap, mode) {
+    // Algoritmo de montagem por linha para múltiplas imagens
+    function packMultipleRowByRow(mW, mH, gap) {
       let placed = [];
-      let rotate = false;
-
-      if (mode === 'rotate') {
-        rotate = true;
-      } else if (mode === 'auto') {
-        const fitNormal = Math.floor((mW + gap) / (iW + gap));
-        const fitRotated = Math.floor((mW + gap) / (iH + gap));
-        if (fitRotated > fitNormal) {
-          rotate = true;
-        }
-      }
-
-      const actualW = rotate ? iH : iW;
-      const actualH = rotate ? iW : iH;
-
+      let currentX = 0;
       let currentY = 0;
+      let rowMaxHeight = 0;
 
-      while (currentY + actualH <= mH) {
-        let currentX = 0;
-        while (currentX + actualW <= mW) {
-          placed.push({
-            x: currentX,
-            y: currentY,
-            w: actualW,
-            h: actualH,
-            rotated: rotate
-          });
-          currentX += actualW + gap;
+      // Cria fila de itens considerando a quantidade desejada
+      let queue = [];
+      let hasInfinite = imageItems.some(item => item.quantity === 0);
+
+      // Preenche contadores de quantidade para controlar limite
+      let counts = imageItems.map(item => item.quantity);
+
+      let itemIndex = 0;
+
+      while (currentY < mH) {
+        // Seleciona próximo item válido da lista
+        let currentItem = imageItems[itemIndex];
+
+        // Se o item atual tem limite e já atingiu a cota, procura o próximo
+        if (currentItem.quantity > 0 && counts[itemIndex] <= 0) {
+          let found = false;
+          for (let i = 0; i < imageItems.length; i++) {
+            if (imageItems[i].quantity === 0 || counts[i] > 0) {
+              itemIndex = i;
+              currentItem = imageItems[itemIndex];
+              found = true;
+              break;
+            }
+          }
+          // Se todos os itens atingiram suas cotas de quantidade, encerra
+          if (!found) break;
         }
-        currentY += actualH + gap;
+
+        const iW = currentItem.widthCm;
+        const iH = currentItem.heightCm;
+
+        // Se o item sozinho for maior que a largura do painel, passa para o próximo
+        if (iW > mW) {
+          itemIndex = (itemIndex + 1) % imageItems.length;
+          continue;
+        }
+
+        // Se não couber na linha atual (horizontal), pula para a próxima linha
+        if (currentX + iW > mW) {
+          currentX = 0;
+          currentY += rowMaxHeight + gap;
+          rowMaxHeight = 0;
+        }
+
+        // Se ao mudar de linha estourar a altura do painel, encerra o loop
+        if (currentY + iH > mH) {
+          break;
+        }
+
+        // Posiciona a imagem
+        placed.push({
+          x: currentX,
+          y: currentY,
+          w: iW,
+          h: iH,
+          imgObj: currentItem.file
+        });
+
+        // Decrementa cota se não for infinito
+        if (currentItem.quantity > 0) {
+          counts[itemIndex]--;
+        }
+
+        // Atualiza a maior altura encontrada nesta linha
+        if (iH > rowMaxHeight) {
+          rowMaxHeight = iH;
+        }
+
+        // Avança posição horizontal
+        currentX += iW + gap;
+
+        // Alterna para o próximo arquivo da fila
+        itemIndex = (itemIndex + 1) % imageItems.length;
       }
 
       return placed;
@@ -240,11 +376,9 @@
       
       let scale;
       if (!isExporting) {
-        // Escala leve para visualização na tela
         const maxCanvasDim = 800;
         scale = Math.min(maxCanvasDim / pW, maxCanvasDim / pH);
       } else {
-        // Escala real de alta definição para download (300 DPI)
         scale = DPI_300_PX_PER_CM;
       }
 
@@ -252,28 +386,22 @@
       canvas.height = pH * scale;
 
       ctx.clearRect(0, 0, canvas.width, canvas.height);
-
       ctx.imageSmoothingEnabled = true;
       ctx.imageSmoothingQuality = 'high';
 
       placedItems.forEach(item => {
         ctx.save();
-        ctx.translate((item.x + item.w / 2) * scale, (item.y + item.h / 2) * scale);
+        ctx.translate(item.x * scale, item.y * scale);
         
-        if (item.rotated) {
-          ctx.rotate(Math.PI / 2);
-        }
+        const renderW = item.w * scale;
+        const renderH = item.h * scale;
         
-        const renderW = (item.rotated ? item.h : item.w) * scale;
-        const renderH = (item.rotated ? item.w : item.h) * scale;
-        
-        // Desenha usando a imagem original sem compressoes intermediarias
-        ctx.drawImage(rawImage, -renderW / 2, -renderH / 2, renderW, renderH);
+        ctx.drawImage(item.imgObj, 0, 0, renderW, renderH);
 
         if (!isExporting) {
           ctx.strokeStyle = "rgba(0,0,0,0.2)";
           ctx.lineWidth = 1;
-          ctx.strokeRect(-renderW / 2, -renderH / 2, renderW, renderH);
+          ctx.strokeRect(0, 0, renderW, renderH);
         }
         ctx.restore();
       });
@@ -295,7 +423,7 @@
         renderCanvas(exportCanvas, pW, pH, currentPlacedData, true);
 
         const link = document.createElement('a');
-        link.download = 'layout-300dpi.png';
+        link.download = 'layout-multiplo-300dpi.png';
         link.href = exportCanvas.toDataURL('image/png');
         link.click();
 
@@ -328,7 +456,7 @@
         });
 
         pdf.addImage(imgData, 'PNG', 0, 0, pW, pH, '', 'FAST');
-        pdf.save('layout-300dpi.pdf');
+        pdf.save('layout-multiplo-300dpi.pdf');
 
         document.getElementById('stats').innerText = "Download do PDF concluído!";
       }, 100);
@@ -336,6 +464,7 @@
   </script>
 </body>
 </html>
+
 
 
 
