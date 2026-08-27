@@ -2,7 +2,8 @@
 <html lang="pt-BR">
 <head>
   <meta charset="UTF-8">
-  <title>Aproveitamento de Espaço para Impressão / Corte</title>
+  <title>Aproveitamento de Espaço com Upscale 4x e Exportação</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
   <style>
     body {
       font-family: Arial, sans-serif;
@@ -33,8 +34,15 @@
       border: 1px solid #ccc;
       border-radius: 4px;
     }
-    button {
+    .button-group {
       grid-column: 1 / -1;
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    button {
+      flex: 1;
+      min-width: 150px;
       padding: 12px;
       background-color: #007bff;
       color: white;
@@ -46,6 +54,12 @@
     button:hover {
       background-color: #0056b3;
     }
+    button.export-btn {
+      background-color: #28a745;
+    }
+    button.export-btn:hover {
+      background-color: #218838;
+    }
     .stats {
       margin-bottom: 20px;
       font-weight: bold;
@@ -55,13 +69,19 @@
     }
     #canvas-container {
       overflow: auto;
-      background: #ccc;
+      background: #e0e0e0;
+      /* Fundo xadrez indicando transparência */
+      background-image: linear-gradient(45deg, #ccc 25%, transparent 25%), 
+                        linear-gradient(-45deg, #ccc 25%, transparent 25%), 
+                        linear-gradient(45deg, transparent 75%, #ccc 75%), 
+                        linear-gradient(-45deg, transparent 75%, #ccc 75%);
+      background-size: 20px 20px;
+      background-position: 0 0, 0 10px, 10px -10px, -10px 0px;
       padding: 20px;
       border-radius: 8px;
     }
     canvas {
-      background: white;
-      box-shadow: 0 0 10px rgba(0,0,0,0.2);
+      box-shadow: 0 0 10px rgba(0,0,0,0.3);
       display: block;
       margin: 0 auto;
     }
@@ -69,7 +89,7 @@
 </head>
 <body>
 
-  <h2>Calculador de Aproveitamento de Área</h2>
+  <h2>Aproveitamento de Área (Upscale 4x & Exportação)</h2>
 
   <div class="controls">
     <div class="input-group">
@@ -96,18 +116,24 @@
       <label>Espaçamento entre imagens (cm):</label>
       <input type="number" id="spacing" value="0.5" step="0.1" min="0">
     </div>
-    <button onclick="calculateAndDraw()">Calcular e Gerar Layout</button>
+    <div class="button-group">
+      <button onclick="calculateAndDraw()">1. Calcular e Visualizar</button>
+      <button class="export-btn" onclick="exportPNG()">2. Baixar PNG (Transparente)</button>
+      <button class="export-btn" onclick="exportPDF()">3. Baixar PDF</button>
+    </div>
   </div>
 
-  <div class="stats" id="stats">Faça o upload de uma imagem e clique em calcular.</div>
+  <div class="stats" id="stats">Faça o upload de uma imagem para começar.</div>
 
   <div id="canvas-container">
     <canvas id="previewCanvas"></canvas>
   </div>
 
   <script>
-    let uploadedImage = null;
+    let rawImage = null;
+    let upscaledImage = null; // Imagem processada em 4x
     let originalAspectRatio = 1;
+    let currentPlacedData = []; // Armazena a disposição das imagens
 
     document.getElementById('imageInput').addEventListener('change', function(e) {
       const file = e.target.files[0];
@@ -115,12 +141,15 @@
 
       const reader = new FileReader();
       reader.onload = function(event) {
-        uploadedImage = new Image();
-        uploadedImage.onload = function() {
-          originalAspectRatio = uploadedImage.width / uploadedImage.height;
+        rawImage = new Image();
+        rawImage.onload = function() {
+          originalAspectRatio = rawImage.width / rawImage.height;
           updateImgHeight();
+          
+          // Gera a versão de alta resolução (Upscale 4x) mantendo transparência
+          generate4xUpscale(rawImage);
         };
-        uploadedImage.src = event.target.result;
+        rawImage.src = event.target.result;
       };
       reader.readAsDataURL(file);
     });
@@ -135,8 +164,26 @@
       }
     }
 
+    // Melhora a resolução do arquivo para 4x em um Canvas secundário transparente
+    function generate4xUpscale(img) {
+      const offCanvas = document.createElement('canvas');
+      offCanvas.width = img.width * 4;
+      offCanvas.height = img.height * 4;
+      const ctx = offCanvas.getContext('2d');
+
+      // Configura a suavização de imagem em alta qualidade
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+
+      // Desenha no canvas 4x maior (fundo transparente é preservado por padrão)
+      ctx.drawImage(img, 0, 0, offCanvas.width, offCanvas.height);
+
+      upscaledImage = new Image();
+      upscaledImage.src = offCanvas.toDataURL('image/png');
+    }
+
     function calculateAndDraw() {
-      if (!uploadedImage) {
+      if (!upscaledImage) {
         alert("Por favor, selecione uma imagem primeiro.");
         return;
       }
@@ -149,53 +196,110 @@
 
       if (!pW || !pH || !iW || !iH) return;
 
-      // Algoritmo de empacotamento com rotação
-      const placed = packImages(pW, pH, iW, iH, gap);
+      // Executa o algoritmo de corte/espaço
+      currentPlacedData = packImages(pW, pH, iW, iH, gap);
 
-      // Renderização no Canvas
-      const canvas = document.getElementById('previewCanvas');
+      // Renderiza na tela para pré-visualização
+      renderCanvas(document.getElementById('previewCanvas'), pW, pH, currentPlacedData, false);
+
+      // Atualiza Estatísticas
+      const totalArea = pW * pH;
+      const usedArea = currentPlacedData.length * (iW * iH);
+      const efficiency = ((usedArea / totalArea) * 100).toFixed(1);
+
+      document.getElementById('stats').innerText = 
+        `Total de imagens encaixadas: ${currentPlacedData.length} unidade(s) | Aproveitamento da área: ${efficiency}% (Resolução 4x Aplicada)`;
+    }
+
+    // Renderiza a montagem dentro do Canvas
+    function renderCanvas(canvas, pW, pH, placedItems, isExporting = false) {
       const ctx = canvas.getContext('2d');
-
-      // Escala para ajustar na tela mantendo proporção (1 cm = N pixels no canvas)
-      const maxCanvasDim = 800;
-      const scale = Math.min(maxCanvasDim / pW, maxCanvasDim / pH);
+      
+      // Definição da escala (Escala de visualização ou DPI alto de exportação)
+      let scale = 10; // 1 cm = 10 pixels por padrão para exibição visual
+      if (!isExporting) {
+        const maxCanvasDim = 800;
+        scale = Math.min(maxCanvasDim / pW, maxCanvasDim / pH);
+      } else {
+        scale = 30; // Resolução mais alta para exportação (30 px por cm)
+      }
 
       canvas.width = pW * scale;
       canvas.height = pH * scale;
 
       ctx.clearRect(0, 0, canvas.width, canvas.height);
-      ctx.fillStyle = "#ffffff";
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-      placed.forEach(item => {
+      placedItems.forEach(item => {
         ctx.save();
         ctx.translate((item.x + item.w / 2) * scale, (item.y + item.h / 2) * scale);
         if (item.rotated) {
           ctx.rotate(Math.PI / 2);
         }
         
-        // Desenha a imagem
         const renderW = (item.rotated ? item.h : item.w) * scale;
         const renderH = (item.rotated ? item.w : item.h) * scale;
-        ctx.drawImage(uploadedImage, -renderW / 2, -renderH / 2, renderW, renderH);
         
-        // Borda leve indicando o corte
-        ctx.strokeStyle = "rgba(0,0,0,0.3)";
-        ctx.lineWidth = 1;
-        ctx.strokeRect(-renderW / 2, -renderH / 2, renderW, renderH);
+        // Ativa filtro de renderização
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
+        ctx.drawImage(upscaledImage, -renderW / 2, -renderH / 2, renderW, renderH);
+
+        // Se for só para pré-visualização no navegador, desenha a borda fina indicando o corte
+        if (!isExporting) {
+          ctx.strokeStyle = "rgba(0,0,0,0.2)";
+          ctx.lineWidth = 1;
+          ctx.strokeRect(-renderW / 2, -renderH / 2, renderW, renderH);
+        }
         ctx.restore();
       });
-
-      // Cálculo de estatísticas
-      const totalArea = pW * pH;
-      const usedArea = placed.length * (iW * iH);
-      const efficiency = ((usedArea / totalArea) * 100).toFixed(1);
-
-      document.getElementById('stats').innerText = 
-        `Total de imagens encaixadas: ${placed.length} unidade(s) | Aproveitamento da área: ${efficiency}%`;
     }
 
-    // Algoritmo de Guilhotina (Bin Packing) com suporte a rotação 90°
+    // Baixar como imagem PNG (Sem fundo)
+    function exportPNG() {
+      if (currentPlacedData.length === 0) {
+        alert("Gere o layout antes de exportar.");
+        return;
+      }
+      const pW = parseFloat(document.getElementById('panelW').value);
+      const pH = parseFloat(document.getElementById('panelH').value);
+
+      const exportCanvas = document.createElement('canvas');
+      renderCanvas(exportCanvas, pW, pH, currentPlacedData, true);
+
+      const link = document.createElement('a');
+      link.download = 'layout-imagens.png';
+      link.href = exportCanvas.toDataURL('image/png');
+      link.click();
+    }
+
+    // Baixar como PDF
+    function exportPDF() {
+      if (currentPlacedData.length === 0) {
+        alert("Gere o layout antes de exportar.");
+        return;
+      }
+
+      const pW = parseFloat(document.getElementById('panelW').value);
+      const pH = parseFloat(document.getElementById('panelH').value);
+
+      const exportCanvas = document.createElement('canvas');
+      renderCanvas(exportCanvas, pW, pH, currentPlacedData, true);
+
+      const imgData = exportCanvas.toDataURL('image/png');
+      
+      const { jsPDF } = window.jspdf;
+      // Cria PDF na dimensão exata em cm
+      const pdf = new jsPDF({
+        orientation: pW > pH ? 'landscape' : 'portrait',
+        unit: 'cm',
+        format: [pW, pH]
+      });
+
+      pdf.addImage(imgData, 'PNG', 0, 0, pW, pH);
+      pdf.save('layout-imagens.pdf');
+    }
+
+    // Algoritmo bin packing
     function packImages(mW, mH, iW, iH, gap) {
       let freeRects = [{ x: 0, y: 0, w: mW, h: mH }];
       let placed = [];
@@ -205,11 +309,9 @@
         let bestRotated = false;
         let bestShortSideFit = Infinity;
 
-        // Encontra o melhor espaço livre para a próxima imagem
         for (let i = 0; i < freeRects.length; i++) {
           let rect = freeRects[i];
 
-          // Testa Sem Rotação
           if (iW <= rect.w && iH <= rect.h) {
             let leftover = Math.min(rect.w - iW, rect.h - iH);
             if (leftover < bestShortSideFit) {
@@ -219,9 +321,8 @@
             }
           }
 
-          // Testa Com Rotação (90 graus)
           if (iH <= rect.w && iW <= rect.h) {
-            let leftover = Math.min(rect.w - iH, rect.h - iW);
+            let leftover = Math.min(rect.w - iH, rect.w - iW);
             if (leftover < bestShortSideFit) {
               bestShortSideFit = leftover;
               bestRectIdx = i;
@@ -230,7 +331,7 @@
           }
         }
 
-        if (bestRectIdx === -1) break; // Não cabe mais nada
+        if (bestRectIdx === -1) break;
 
         let target = freeRects.splice(bestRectIdx, 1)[0];
         let actualW = bestRotated ? iH : iW;
@@ -244,7 +345,6 @@
           rotated: bestRotated
         });
 
-        // Divisão de espaço restante (Guilhotina)
         let rightSpace = {
           x: target.x + actualW + gap,
           y: target.y,
@@ -268,3 +368,4 @@
   </script>
 </body>
 </html>
+
