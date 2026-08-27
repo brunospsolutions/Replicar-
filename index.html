@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
   <meta charset="UTF-8">
-  <title>Aproveitamento de Área - Preenchimento por Linhas</title>
+  <title>Aproveitamento de Área - Alta Resolução (300 DPI)</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
   <style>
     body {
@@ -88,7 +88,7 @@
 </head>
 <body>
 
-  <h2>Aproveitamento de Área (Preenchimento Horizontal em Linhas)</h2>
+  <h2>Aproveitamento de Área (Renderização 300 DPI)</h2>
 
   <div class="controls">
     <div class="input-group">
@@ -125,8 +125,8 @@
     </div>
     <div class="button-group">
       <button onclick="calculateAndDraw()">1. Calcular e Visualizar</button>
-      <button class="export-btn" onclick="exportPNG()">2. Baixar PNG (Transparente)</button>
-      <button class="export-btn" onclick="exportPDF()">3. Baixar PDF</button>
+      <button class="export-btn" onclick="exportPNG()">2. Baixar PNG (300 DPI)</button>
+      <button class="export-btn" onclick="exportPDF()">3. Baixar PDF (300 DPI)</button>
     </div>
   </div>
 
@@ -138,9 +138,11 @@
 
   <script>
     let rawImage = null;
-    let upscaledImage = null;
     let originalAspectRatio = 1;
     let currentPlacedData = [];
+
+    // Densidade de pixels para exportação em qualidade gráfica (300 DPI = ~118.11 px/cm)
+    const DPI_300_PX_PER_CM = 300 / 2.54;
 
     document.getElementById('imageInput').addEventListener('change', function(e) {
       const file = e.target.files[0];
@@ -152,7 +154,6 @@
         rawImage.onload = function() {
           originalAspectRatio = rawImage.width / rawImage.height;
           updateImgHeight();
-          generate4xUpscale(rawImage);
         };
         rawImage.src = event.target.result;
       };
@@ -169,22 +170,8 @@
       }
     }
 
-    function generate4xUpscale(img) {
-      const offCanvas = document.createElement('canvas');
-      offCanvas.width = img.width * 4;
-      offCanvas.height = img.height * 4;
-      const ctx = offCanvas.getContext('2d');
-
-      ctx.imageSmoothingEnabled = true;
-      ctx.imageSmoothingQuality = 'high';
-      ctx.drawImage(img, 0, 0, offCanvas.width, offCanvas.height);
-
-      upscaledImage = new Image();
-      upscaledImage.src = offCanvas.toDataURL('image/png');
-    }
-
     function calculateAndDraw() {
-      if (!upscaledImage) {
+      if (!rawImage) {
         alert("Por favor, selecione uma imagem primeiro.");
         return;
       }
@@ -198,9 +185,9 @@
 
       if (!pW || !pH || !iW || !iH) return;
 
-      // Executa o algoritmo de preenchimento em linha
       currentPlacedData = packRowByRow(pW, pH, iW, iH, gap, mode);
 
+      // Renderiza apenas na escala leve de tela para pré-visualização
       renderCanvas(document.getElementById('previewCanvas'), pW, pH, currentPlacedData, false);
 
       const totalArea = pW * pH;
@@ -211,16 +198,13 @@
         `Total de imagens encaixadas: ${currentPlacedData.length} unidade(s) | Aproveitamento da área: ${efficiency}%`;
     }
 
-    // Algoritmo que preenche na Horizontal primeiro, depois desce na Vertical
     function packRowByRow(mW, mH, iW, iH, gap, mode) {
       let placed = [];
       let rotate = false;
 
-      // Define se vai rotacionar com base no modo selecionado
       if (mode === 'rotate') {
         rotate = true;
       } else if (mode === 'auto') {
-        // Calcula quantas cabem na largura sem rotacionar vs rotacionado
         const fitNormal = Math.floor((mW + gap) / (iW + gap));
         const fitRotated = Math.floor((mW + gap) / (iH + gap));
         if (fitRotated > fitNormal) {
@@ -233,11 +217,8 @@
 
       let currentY = 0;
 
-      // Enquanto couber na altura (vertical)
       while (currentY + actualH <= mH) {
         let currentX = 0;
-
-        // Preenche totalmente na largura (horizontal)
         while (currentX + actualW <= mW) {
           placed.push({
             x: currentX,
@@ -246,12 +227,8 @@
             h: actualH,
             rotated: rotate
           });
-
-          // Avança para a próxima coluna horizontal
           currentX += actualW + gap;
         }
-
-        // Quando a linha enche, avança para a próxima linha vertical
         currentY += actualH + gap;
       }
 
@@ -261,12 +238,14 @@
     function renderCanvas(canvas, pW, pH, placedItems, isExporting = false) {
       const ctx = canvas.getContext('2d');
       
-      let scale = 10;
+      let scale;
       if (!isExporting) {
+        // Escala leve para visualização na tela
         const maxCanvasDim = 800;
         scale = Math.min(maxCanvasDim / pW, maxCanvasDim / pH);
       } else {
-        scale = 30;
+        // Escala real de alta definição para download (300 DPI)
+        scale = DPI_300_PX_PER_CM;
       }
 
       canvas.width = pW * scale;
@@ -274,9 +253,13 @@
 
       ctx.clearRect(0, 0, canvas.width, canvas.height);
 
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+
       placedItems.forEach(item => {
         ctx.save();
         ctx.translate((item.x + item.w / 2) * scale, (item.y + item.h / 2) * scale);
+        
         if (item.rotated) {
           ctx.rotate(Math.PI / 2);
         }
@@ -284,9 +267,8 @@
         const renderW = (item.rotated ? item.h : item.w) * scale;
         const renderH = (item.rotated ? item.w : item.h) * scale;
         
-        ctx.imageSmoothingEnabled = true;
-        ctx.imageSmoothingQuality = 'high';
-        ctx.drawImage(upscaledImage, -renderW / 2, -renderH / 2, renderW, renderH);
+        // Desenha usando a imagem original sem compressoes intermediarias
+        ctx.drawImage(rawImage, -renderW / 2, -renderH / 2, renderW, renderH);
 
         if (!isExporting) {
           ctx.strokeStyle = "rgba(0,0,0,0.2)";
@@ -302,16 +284,23 @@
         alert("Gere o layout antes de exportar.");
         return;
       }
-      const pW = parseFloat(document.getElementById('panelW').value);
-      const pH = parseFloat(document.getElementById('panelH').value);
 
-      const exportCanvas = document.createElement('canvas');
-      renderCanvas(exportCanvas, pW, pH, currentPlacedData, true);
+      document.getElementById('stats').innerText = "Processando imagem em alta resolução (300 DPI)... Aguarde um instante.";
 
-      const link = document.createElement('a');
-      link.download = 'layout-imagens-linhas.png';
-      link.href = exportCanvas.toDataURL('image/png');
-      link.click();
+      setTimeout(() => {
+        const pW = parseFloat(document.getElementById('panelW').value);
+        const pH = parseFloat(document.getElementById('panelH').value);
+
+        const exportCanvas = document.createElement('canvas');
+        renderCanvas(exportCanvas, pW, pH, currentPlacedData, true);
+
+        const link = document.createElement('a');
+        link.download = 'layout-300dpi.png';
+        link.href = exportCanvas.toDataURL('image/png');
+        link.click();
+
+        document.getElementById('stats').innerText = "Download concluído com sucesso!";
+      }, 100);
     }
 
     function exportPDF() {
@@ -320,26 +309,33 @@
         return;
       }
 
-      const pW = parseFloat(document.getElementById('panelW').value);
-      const pH = parseFloat(document.getElementById('panelH').value);
+      document.getElementById('stats').innerText = "Gerando PDF em alta resolução (300 DPI)... Aguarde um instante.";
 
-      const exportCanvas = document.createElement('canvas');
-      renderCanvas(exportCanvas, pW, pH, currentPlacedData, true);
+      setTimeout(() => {
+        const pW = parseFloat(document.getElementById('panelW').value);
+        const pH = parseFloat(document.getElementById('panelH').value);
 
-      const imgData = exportCanvas.toDataURL('image/png');
-      
-      const { jsPDF } = window.jspdf;
-      const pdf = new jsPDF({
-        orientation: pW > pH ? 'landscape' : 'portrait',
-        unit: 'cm',
-        format: [pW, pH]
-      });
+        const exportCanvas = document.createElement('canvas');
+        renderCanvas(exportCanvas, pW, pH, currentPlacedData, true);
 
-      pdf.addImage(imgData, 'PNG', 0, 0, pW, pH);
-      pdf.save('layout-imagens-linhas.pdf');
+        const imgData = exportCanvas.toDataURL('image/png');
+        
+        const { jsPDF } = window.jspdf;
+        const pdf = new jsPDF({
+          orientation: pW > pH ? 'landscape' : 'portrait',
+          unit: 'cm',
+          format: [pW, pH]
+        });
+
+        pdf.addImage(imgData, 'PNG', 0, 0, pW, pH, '', 'FAST');
+        pdf.save('layout-300dpi.pdf');
+
+        document.getElementById('stats').innerText = "Download do PDF concluído!";
+      }, 100);
     }
   </script>
 </body>
 </html>
+
 
 
