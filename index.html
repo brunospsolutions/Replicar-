@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
   <meta charset="UTF-8">
-  <title>Replicador de Arquivo</title>
+  <title>Aproveitamento de Área - Preenchimento por Linhas</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
   <style>
     body {
@@ -29,7 +29,7 @@
       margin-bottom: 5px;
       font-size: 0.9em;
     }
-    .input-group input {
+    .input-group input, .input-group select {
       padding: 8px;
       border: 1px solid #ccc;
       border-radius: 4px;
@@ -70,7 +70,6 @@
     #canvas-container {
       overflow: auto;
       background: #e0e0e0;
-      /* Fundo xadrez indicando transparência */
       background-image: linear-gradient(45deg, #ccc 25%, transparent 25%), 
                         linear-gradient(-45deg, #ccc 25%, transparent 25%), 
                         linear-gradient(45deg, transparent 75%, #ccc 75%), 
@@ -89,7 +88,7 @@
 </head>
 <body>
 
-  <h2>Aproveitamento de Área (Upscale 4x & Exportação)</h2>
+  <h2>Aproveitamento de Área (Preenchimento Horizontal em Linhas)</h2>
 
   <div class="controls">
     <div class="input-group">
@@ -116,6 +115,14 @@
       <label>Espaçamento entre imagens (cm):</label>
       <input type="number" id="spacing" value="0.5" step="0.1" min="0">
     </div>
+    <div class="input-group">
+      <label>Orientação da Imagem:</label>
+      <select id="orientationMode">
+        <option value="auto">Automática (Qual couber mais por linha)</option>
+        <option value="original">Original (Sem rotação)</option>
+        <option value="rotate">Rotacionar 90°</option>
+      </select>
+    </div>
     <div class="button-group">
       <button onclick="calculateAndDraw()">1. Calcular e Visualizar</button>
       <button class="export-btn" onclick="exportPNG()">2. Baixar PNG (Transparente)</button>
@@ -131,9 +138,9 @@
 
   <script>
     let rawImage = null;
-    let upscaledImage = null; // Imagem processada em 4x
+    let upscaledImage = null;
     let originalAspectRatio = 1;
-    let currentPlacedData = []; // Armazena a disposição das imagens
+    let currentPlacedData = [];
 
     document.getElementById('imageInput').addEventListener('change', function(e) {
       const file = e.target.files[0];
@@ -145,8 +152,6 @@
         rawImage.onload = function() {
           originalAspectRatio = rawImage.width / rawImage.height;
           updateImgHeight();
-          
-          // Gera a versão de alta resolução (Upscale 4x) mantendo transparência
           generate4xUpscale(rawImage);
         };
         rawImage.src = event.target.result;
@@ -164,18 +169,14 @@
       }
     }
 
-    // Melhora a resolução do arquivo para 4x em um Canvas secundário transparente
     function generate4xUpscale(img) {
       const offCanvas = document.createElement('canvas');
       offCanvas.width = img.width * 4;
       offCanvas.height = img.height * 4;
       const ctx = offCanvas.getContext('2d');
 
-      // Configura a suavização de imagem em alta qualidade
       ctx.imageSmoothingEnabled = true;
       ctx.imageSmoothingQuality = 'high';
-
-      // Desenha no canvas 4x maior (fundo transparente é preservado por padrão)
       ctx.drawImage(img, 0, 0, offCanvas.width, offCanvas.height);
 
       upscaledImage = new Image();
@@ -193,35 +194,79 @@
       const iW = parseFloat(document.getElementById('imgW').value);
       const iH = parseFloat(document.getElementById('imgH').value);
       const gap = parseFloat(document.getElementById('spacing').value);
+      const mode = document.getElementById('orientationMode').value;
 
       if (!pW || !pH || !iW || !iH) return;
 
-      // Executa o algoritmo de corte/espaço
-      currentPlacedData = packImages(pW, pH, iW, iH, gap);
+      // Executa o algoritmo de preenchimento em linha
+      currentPlacedData = packRowByRow(pW, pH, iW, iH, gap, mode);
 
-      // Renderiza na tela para pré-visualização
       renderCanvas(document.getElementById('previewCanvas'), pW, pH, currentPlacedData, false);
 
-      // Atualiza Estatísticas
       const totalArea = pW * pH;
       const usedArea = currentPlacedData.length * (iW * iH);
       const efficiency = ((usedArea / totalArea) * 100).toFixed(1);
 
       document.getElementById('stats').innerText = 
-        `Total de imagens encaixadas: ${currentPlacedData.length} unidade(s) | Aproveitamento da área: ${efficiency}% (Resolução 4x Aplicada)`;
+        `Total de imagens encaixadas: ${currentPlacedData.length} unidade(s) | Aproveitamento da área: ${efficiency}%`;
     }
 
-    // Renderiza a montagem dentro do Canvas
+    // Algoritmo que preenche na Horizontal primeiro, depois desce na Vertical
+    function packRowByRow(mW, mH, iW, iH, gap, mode) {
+      let placed = [];
+      let rotate = false;
+
+      // Define se vai rotacionar com base no modo selecionado
+      if (mode === 'rotate') {
+        rotate = true;
+      } else if (mode === 'auto') {
+        // Calcula quantas cabem na largura sem rotacionar vs rotacionado
+        const fitNormal = Math.floor((mW + gap) / (iW + gap));
+        const fitRotated = Math.floor((mW + gap) / (iH + gap));
+        if (fitRotated > fitNormal) {
+          rotate = true;
+        }
+      }
+
+      const actualW = rotate ? iH : iW;
+      const actualH = rotate ? iW : iH;
+
+      let currentY = 0;
+
+      // Enquanto couber na altura (vertical)
+      while (currentY + actualH <= mH) {
+        let currentX = 0;
+
+        // Preenche totalmente na largura (horizontal)
+        while (currentX + actualW <= mW) {
+          placed.push({
+            x: currentX,
+            y: currentY,
+            w: actualW,
+            h: actualH,
+            rotated: rotate
+          });
+
+          // Avança para a próxima coluna horizontal
+          currentX += actualW + gap;
+        }
+
+        // Quando a linha enche, avança para a próxima linha vertical
+        currentY += actualH + gap;
+      }
+
+      return placed;
+    }
+
     function renderCanvas(canvas, pW, pH, placedItems, isExporting = false) {
       const ctx = canvas.getContext('2d');
       
-      // Definição da escala (Escala de visualização ou DPI alto de exportação)
-      let scale = 10; // 1 cm = 10 pixels por padrão para exibição visual
+      let scale = 10;
       if (!isExporting) {
         const maxCanvasDim = 800;
         scale = Math.min(maxCanvasDim / pW, maxCanvasDim / pH);
       } else {
-        scale = 30; // Resolução mais alta para exportação (30 px por cm)
+        scale = 30;
       }
 
       canvas.width = pW * scale;
@@ -239,12 +284,10 @@
         const renderW = (item.rotated ? item.h : item.w) * scale;
         const renderH = (item.rotated ? item.w : item.h) * scale;
         
-        // Ativa filtro de renderização
         ctx.imageSmoothingEnabled = true;
         ctx.imageSmoothingQuality = 'high';
         ctx.drawImage(upscaledImage, -renderW / 2, -renderH / 2, renderW, renderH);
 
-        // Se for só para pré-visualização no navegador, desenha a borda fina indicando o corte
         if (!isExporting) {
           ctx.strokeStyle = "rgba(0,0,0,0.2)";
           ctx.lineWidth = 1;
@@ -254,7 +297,6 @@
       });
     }
 
-    // Baixar como imagem PNG (Sem fundo)
     function exportPNG() {
       if (currentPlacedData.length === 0) {
         alert("Gere o layout antes de exportar.");
@@ -267,12 +309,11 @@
       renderCanvas(exportCanvas, pW, pH, currentPlacedData, true);
 
       const link = document.createElement('a');
-      link.download = 'layout-imagens.png';
+      link.download = 'layout-imagens-linhas.png';
       link.href = exportCanvas.toDataURL('image/png');
       link.click();
     }
 
-    // Baixar como PDF
     function exportPDF() {
       if (currentPlacedData.length === 0) {
         alert("Gere o layout antes de exportar.");
@@ -288,7 +329,6 @@
       const imgData = exportCanvas.toDataURL('image/png');
       
       const { jsPDF } = window.jspdf;
-      // Cria PDF na dimensão exata em cm
       const pdf = new jsPDF({
         orientation: pW > pH ? 'landscape' : 'portrait',
         unit: 'cm',
@@ -296,76 +336,10 @@
       });
 
       pdf.addImage(imgData, 'PNG', 0, 0, pW, pH);
-      pdf.save('layout-imagens.pdf');
-    }
-
-    // Algoritmo bin packing
-    function packImages(mW, mH, iW, iH, gap) {
-      let freeRects = [{ x: 0, y: 0, w: mW, h: mH }];
-      let placed = [];
-
-      while (true) {
-        let bestRectIdx = -1;
-        let bestRotated = false;
-        let bestShortSideFit = Infinity;
-
-        for (let i = 0; i < freeRects.length; i++) {
-          let rect = freeRects[i];
-
-          if (iW <= rect.w && iH <= rect.h) {
-            let leftover = Math.min(rect.w - iW, rect.h - iH);
-            if (leftover < bestShortSideFit) {
-              bestShortSideFit = leftover;
-              bestRectIdx = i;
-              bestRotated = false;
-            }
-          }
-
-          if (iH <= rect.w && iW <= rect.h) {
-            let leftover = Math.min(rect.w - iH, rect.w - iW);
-            if (leftover < bestShortSideFit) {
-              bestShortSideFit = leftover;
-              bestRectIdx = i;
-              bestRotated = true;
-            }
-          }
-        }
-
-        if (bestRectIdx === -1) break;
-
-        let target = freeRects.splice(bestRectIdx, 1)[0];
-        let actualW = bestRotated ? iH : iW;
-        let actualH = bestRotated ? iW : iH;
-
-        placed.push({
-          x: target.x,
-          y: target.y,
-          w: actualW,
-          h: actualH,
-          rotated: bestRotated
-        });
-
-        let rightSpace = {
-          x: target.x + actualW + gap,
-          y: target.y,
-          w: target.w - actualW - gap,
-          h: target.h
-        };
-
-        let bottomSpace = {
-          x: target.x,
-          y: target.y + actualH + gap,
-          w: actualW,
-          h: target.h - actualH - gap
-        };
-
-        if (rightSpace.w > 0 && rightSpace.h > 0) freeRects.push(rightSpace);
-        if (bottomSpace.w > 0 && bottomSpace.h > 0) freeRects.push(bottomSpace);
-      }
-
-      return placed;
+      pdf.save('layout-imagens-linhas.pdf');
     }
   </script>
 </body>
 </html>
+
 
