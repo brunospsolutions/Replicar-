@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
   <meta charset="UTF-8">
-  <title>Aproveitamento de Área - Modo Híbrido (Proporcional / Agrupado)</title>
+  <title>Aproveitamento de Área - Otimizador Inteligente com Rotação (300 DPI)</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
   <style>
     body {
@@ -126,7 +126,7 @@
 </head>
 <body>
 
-  <h2>Aproveitamento de Área - Inteligente (Sequencial / Agrupado)</h2>
+  <h2>Aproveitamento Máximo de Área - Bin Packing com Rotação (300 DPI)</h2>
 
   <div class="controls">
     <div class="input-group">
@@ -145,6 +145,13 @@
       <label>Espaçamento entre imagens (cm):</label>
       <input type="number" id="spacing" value="0.5" step="0.1" min="0">
     </div>
+    <div class="input-group">
+      <label>Permitir Rotação Individual (90°):</label>
+      <select id="allowRotation">
+        <option value="yes">Sim (Recomendado para máximo uso)</option>
+        <option value="no">Não (Manter orientação original)</option>
+      </select>
+    </div>
 
     <div class="image-list-container">
       <strong>Fila de Arquivos Carregados:</strong>
@@ -154,7 +161,7 @@
     </div>
 
     <div class="button-group">
-      <button onclick="calculateAndDraw()">1. Calcular e Visualizar</button>
+      <button onclick="calculateAndDraw()">1. Otimizar e Visualizar Layout</button>
       <button class="export-btn" onclick="exportPNG()">2. Baixar PNG (300 DPI)</button>
       <button class="export-btn" onclick="exportPDF()">3. Baixar PDF (300 DPI)</button>
     </div>
@@ -180,7 +187,6 @@
         reader.onload = function(event) {
           const rawImg = new Image();
           rawImg.onload = function() {
-            // Auto-crop de bordas transparentes
             const croppedCanvas = cropTransparentEdges(rawImg);
             const croppedImg = new Image();
             croppedImg.onload = function() {
@@ -195,7 +201,7 @@
                 aspectRatio: aspectRatio,
                 widthCm: defaultW,
                 heightCm: defaultH,
-                quantity: 0 // 0 = Modo proporcional sequencial
+                quantity: 0
               });
 
               renderImageList();
@@ -321,19 +327,11 @@
       const pW = parseFloat(document.getElementById('panelW').value);
       const pH = parseFloat(document.getElementById('panelH').value);
       const gap = parseFloat(document.getElementById('spacing').value);
+      const allowRotation = document.getElementById('allowRotation').value === 'yes';
 
       if (!pW || !pH) return;
 
-      // Verifica se alguma imagem possui quantidade definida maior que zero
-      const hasSpecificQuantities = imageItems.some(item => item.quantity > 0);
-
-      if (hasSpecificQuantities) {
-        // Se houver quantidades definidas, ativa o AGRUPAMENTO
-        currentPlacedData = packGroupedByQuantity(pW, pH, gap);
-      } else {
-        // Se todas forem 0, usa o modo SEQUENCIAL PROPORCIONAL
-        currentPlacedData = packSequentialRowByRow(pW, pH, gap);
-      }
+      currentPlacedData = packMaxEfficiency(pW, pH, gap, allowRotation);
 
       renderCanvas(document.getElementById('previewCanvas'), pW, pH, currentPlacedData, false);
 
@@ -348,90 +346,105 @@
         `Total de imagens encaixadas: ${currentPlacedData.length} unidade(s) | Aproveitamento da área: ${efficiency}%`;
     }
 
-    // Algoritmo 1: Preenchimento Sequencial Proporcional (Quando Qtd = 0)
-    function packSequentialRowByRow(mW, mH, gap) {
+    // Algoritmo Guilhotina 2D com Otimização de Lacunas e Rotação 90°
+    function packMaxEfficiency(mW, mH, gap, allowRotation) {
+      let freeRects = [{ x: 0, y: 0, w: mW, h: mH }];
       let placed = [];
-      let currentX = 0;
-      let currentY = 0;
-      let rowMaxHeight = 0;
-      let itemIndex = 0;
-      const totalItems = imageItems.length;
 
-      while (currentY < mH) {
-        const currentItem = imageItems[itemIndex];
-        const iW = currentItem.widthCm;
-        const iH = currentItem.heightCm;
+      // Constrói lista de itens a serem posicionados
+      let itemsToPack = [];
+      let counts = imageItems.map(item => item.quantity);
+      let loopCounter = 0;
+      let maxLoop = 10000; // Limite de segurança
 
-        if (iW > mW) {
-          itemIndex = (itemIndex + 1) % totalItems;
-          continue;
+      while (loopCounter < maxLoop) {
+        let addedInThisPass = 0;
+        for (let i = 0; i < imageItems.length; i++) {
+          const item = imageItems[i];
+          if (item.quantity === 0 || counts[i] > 0) {
+            itemsToPack.push({
+              itemObj: item,
+              w: item.widthCm,
+              h: item.heightCm,
+              area: item.widthCm * item.heightCm
+            });
+            if (item.quantity > 0) counts[i]--;
+            addedInThisPass++;
+          }
         }
-
-        if (currentX + iW > mW) {
-          currentX = 0;
-          currentY += rowMaxHeight + gap;
-          rowMaxHeight = 0;
-        }
-
-        if (currentY + iH > mH) break;
-
-        placed.push({
-          x: currentX,
-          y: currentY,
-          w: iW,
-          h: iH,
-          imgObj: currentItem.file
-        });
-
-        if (iH > rowMaxHeight) rowMaxHeight = iH;
-        currentX += iW + gap;
-        itemIndex = (itemIndex + 1) % totalItems;
+        if (addedInThisPass === 0) break;
+        // Se todas as imagens forem infinitas (quantity=0), roda o bastante para preencher
+        if (imageItems.every(item => item.quantity === 0) && itemsToPack.length > 500) break;
+        loopCounter++;
       }
 
-      return placed;
-    }
+      // Processa cada item procurando a melhor lacuna (Best Short Side Fit)
+      for (let k = 0; k < itemsToPack.length; k++) {
+        const item = itemsToPack[k];
+        let bestRectIdx = -1;
+        let bestRotated = false;
+        let bestShortSideFit = Infinity;
 
-    // Algoritmo 2: Agrupamento em Bloco Contínuo (Quando Qtd > 0)
-    function packGroupedByQuantity(mW, mH, gap) {
-      let placed = [];
-      let currentX = 0;
-      let currentY = 0;
-      let rowMaxHeight = 0;
+        for (let i = 0; i < freeRects.length; i++) {
+          let rect = freeRects[i];
 
-      for (let i = 0; i < imageItems.length; i++) {
-        const item = imageItems[i];
-        const iW = item.widthCm;
-        const iH = item.heightCm;
-        const targetQty = item.quantity;
-
-        if (iW > mW || iH > mH) continue;
-
-        let count = 0;
-
-        // Se targetQty for 0 mas houver outros com Qtd > 0, vai ate estourar
-        while (targetQty === 0 || count < targetQty) {
-          if (currentX + iW > mW) {
-            currentX = 0;
-            currentY += rowMaxHeight + gap;
-            rowMaxHeight = 0;
+          // Testa sem rotação
+          if (item.w <= rect.w && item.h <= rect.h) {
+            let leftover = Math.min(rect.w - item.w, rect.h - item.h);
+            if (leftover < bestShortSideFit) {
+              bestShortSideFit = leftover;
+              bestRectIdx = i;
+              bestRotated = false;
+            }
           }
 
-          if (currentY + iH > mH) break;
-
-          placed.push({
-            x: currentX,
-            y: currentY,
-            w: iW,
-            h: iH,
-            imgObj: item.file
-          });
-
-          count++;
-          if (iH > rowMaxHeight) rowMaxHeight = iH;
-          currentX += iW + gap;
+          // Testa com rotação 90° (se permitido)
+          if (allowRotation && item.h <= rect.w && item.w <= rect.h) {
+            let leftover = Math.min(rect.w - item.h, rect.h - item.w);
+            if (leftover < bestShortSideFit) {
+              bestShortSideFit = leftover;
+              bestRectIdx = i;
+              bestRotated = true;
+            }
+          }
         }
 
-        if (currentY >= mH) break;
+        // Se encontrou espaço livre adequado
+        if (bestRectIdx !== -1) {
+          let target = freeRects.splice(bestRectIdx, 1)[0];
+          let actualW = bestRotated ? item.h : item.w;
+          let actualH = bestRotated ? item.w : item.h;
+
+          placed.push({
+            x: target.x,
+            y: target.y,
+            w: actualW,
+            h: actualH,
+            rotated: bestRotated,
+            imgObj: item.itemObj.file
+          });
+
+          // Subdivide a área restante em retângulos menores (Direita e Abaixo)
+          let rightSpace = {
+            x: target.x + actualW + gap,
+            y: target.y,
+            w: target.w - actualW - gap,
+            h: actualH
+          };
+
+          let bottomSpace = {
+            x: target.x,
+            y: target.y + actualH + gap,
+            w: target.w,
+            h: target.h - actualH - gap
+          };
+
+          if (rightSpace.w > 0 && rightSpace.h > 0) freeRects.push(rightSpace);
+          if (bottomSpace.w > 0 && bottomSpace.h > 0) freeRects.push(bottomSpace);
+
+          // Ordena espaços livres para priorizar o preenchimento dos cantos mais altos
+          freeRects.sort((a, b) => a.y - b.y || a.x - b.x);
+        }
       }
 
       return placed;
@@ -457,17 +470,21 @@
 
       placedItems.forEach(item => {
         ctx.save();
-        ctx.translate(item.x * scale, item.y * scale);
+        ctx.translate((item.x + item.w / 2) * scale, (item.y + item.h / 2) * scale);
         
-        const renderW = item.w * scale;
-        const renderH = item.h * scale;
+        if (item.rotated) {
+          ctx.rotate(Math.PI / 2);
+        }
+
+        const renderW = (item.rotated ? item.h : item.w) * scale;
+        const renderH = (item.rotated ? item.w : item.h) * scale;
         
-        ctx.drawImage(item.imgObj, 0, 0, renderW, renderH);
+        ctx.drawImage(item.imgObj, -renderW / 2, -renderH / 2, renderW, renderH);
 
         if (!isExporting) {
           ctx.strokeStyle = "rgba(0,0,0,0.2)";
           ctx.lineWidth = 1;
-          ctx.strokeRect(0, 0, renderW, renderH);
+          ctx.strokeRect(-renderW / 2, -renderH / 2, renderW, renderH);
         }
         ctx.restore();
       });
@@ -489,7 +506,7 @@
         renderCanvas(exportCanvas, pW, pH, currentPlacedData, true);
 
         const link = document.createElement('a');
-        link.download = 'layout-300dpi.png';
+        link.download = 'layout-otimizado-300dpi.png';
         link.href = exportCanvas.toDataURL('image/png');
         link.click();
 
@@ -522,7 +539,7 @@
         });
 
         pdf.addImage(imgData, 'PNG', 0, 0, pW, pH, '', 'FAST');
-        pdf.save('layout-300dpi.pdf');
+        pdf.save('layout-otimizado-300dpi.pdf');
 
         document.getElementById('stats').innerText = "Download do PDF concluído!";
       }, 100);
