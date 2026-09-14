@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
   <meta charset="UTF-8">
-  <title>Aproveitamento de Área - Alinhamento de Corte Corrigido</title>
+  <title>Aproveitamento de Área - Preenchimento Sequencial Proporcional</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
   <style>
     body {
@@ -126,7 +126,7 @@
 </head>
 <body>
 
-  <h2>Aproveitamento de Área - Alinhamento de Corte por Grupos</h2>
+  <h2>Aproveitamento de Área - Preenchimento Sequencial Proporcional</h2>
 
   <div class="controls">
     <div class="input-group">
@@ -147,7 +147,7 @@
     </div>
 
     <div class="image-list-container">
-      <strong>Fila de Arquivos Carregados (Imagens são agrupadas em blocos alinhados):</strong>
+      <strong>Fila de Arquivos Carregados:</strong>
       <div id="imageList" style="margin-top: 10px;">
         <span style="color: #777; font-size: 0.9em;">Nenhuma imagem adicionada.</span>
       </div>
@@ -180,7 +180,7 @@
         reader.onload = function(event) {
           const rawImg = new Image();
           rawImg.onload = function() {
-            // Recorta bordas transparentes excedentes
+            // Auto-crop de bordas transparentes
             const croppedCanvas = cropTransparentEdges(rawImg);
             const croppedImg = new Image();
             croppedImg.onload = function() {
@@ -195,7 +195,7 @@
                 aspectRatio: aspectRatio,
                 widthCm: defaultW,
                 heightCm: defaultH,
-                quantity: 0 // 0 = Distribuir equilibrado com as outras imagens
+                quantity: 0 // 0 = Repetir sequencialmente até preencher o painel
               });
 
               renderImageList();
@@ -273,7 +273,7 @@
             <input type="number" value="${item.heightCm.toFixed(2)}" step="0.1" min="0.1" onchange="updateItemHeight(${index}, this.value)">
           </div>
           <div class="input-group">
-            <label style="font-size:0.75em;">Qtd (0 = Automático):</label>
+            <label style="font-size:0.75em;">Qtd (0 = Infinito):</label>
             <input type="number" value="${item.quantity}" min="0" onchange="updateItemQuantity(${index}, this.value)">
           </div>
           <button class="remove-btn" onclick="removeItem(${index})">X</button>
@@ -324,7 +324,7 @@
 
       if (!pW || !pH) return;
 
-      currentPlacedData = packGroupedByImage(pW, pH, gap);
+      currentPlacedData = packSequentialRowByRow(pW, pH, gap);
 
       renderCanvas(document.getElementById('previewCanvas'), pW, pH, currentPlacedData, false);
 
@@ -339,75 +339,85 @@
         `Total de imagens encaixadas: ${currentPlacedData.length} unidade(s) | Aproveitamento da área: ${efficiency}%`;
     }
 
-    // Algoritmo de Agrupamento Corrigido
-    function packGroupedByImage(mW, mH, gap) {
+    // Preenchimento sequencial proporcional por linha
+    function packSequentialRowByRow(mW, mH, gap) {
       let placed = [];
       let currentX = 0;
       let currentY = 0;
+      let rowMaxHeight = 0;
 
-      // Conta quantas imagens estão marcadas com quantidade 0 (automático/proporcional)
-      const autoItemsCount = imageItems.filter(item => item.quantity === 0).length;
+      // Cópia do controle de quantidades definidas pelo usuário
+      let remainingCounts = imageItems.map(item => item.quantity);
 
-      for (let itemIdx = 0; itemIdx < imageItems.length; itemIdx++) {
-        const item = imageItems[itemIdx];
-        const iW = item.widthCm;
-        const iH = item.heightCm;
+      let itemIndex = 0;
+      let totalItems = imageItems.length;
 
-        if (iW > mW || iH > mH) continue; // Pula se a imagem for maior que o painel
+      while (currentY < mH) {
+        // Encontra o próximo item disponível na fila circular
+        let checkedCount = 0;
+        let foundValidItem = false;
 
-        let placedCount = 0;
-        let rowMaxHeight = 0;
+        while (checkedCount < totalItems) {
+          const item = imageItems[itemIndex];
 
-        // Se a quantidade for 0, calcula o limite de linhas por tipo para dividirem a folha igualmente
-        let targetCount = item.quantity;
-        let maxYForThisItem = mH;
-
-        if (targetCount === 0 && autoItemsCount > 1) {
-          // Reserva uma fração equivalente da altura total para cada imagem automática
-          const allocatedHeightPerGroup = (mH - currentY) / (autoItemsCount - itemIdx);
-          maxYForThisItem = currentY + allocatedHeightPerGroup;
-        }
-
-        while (true) {
-          // Se houver limite numérico de quantidade e já atingiu, encerra este grupo
-          if (targetCount > 0 && placedCount >= targetCount) break;
-
-          // Se não couber na largura da linha atual, salta para a linha seguinte
-          if (currentX + iW > mW) {
-            currentX = 0;
-            currentY += rowMaxHeight + gap;
-            rowMaxHeight = 0;
-          }
-
-          // Se ultrapassar a altura reservada para esta imagem ou o limite do painel, encerra
-          if (currentY + iH > maxYForThisItem || currentY + iH > mH) {
+          // Se item é válido e ainda possui cota (ou é 0/infinito)
+          if (item.quantity === 0 || remainingCounts[itemIndex] > 0) {
+            foundValidItem = true;
             break;
           }
 
-          placed.push({
-            x: currentX,
-            y: currentY,
-            w: iW,
-            h: iH,
-            imgObj: item.file
-          });
-
-          placedCount++;
-
-          if (iH > rowMaxHeight) {
-            rowMaxHeight = iH;
-          }
-
-          currentX += iW + gap;
+          // Passa para o próximo
+          itemIndex = (itemIndex + 1) % totalItems;
+          checkedCount++;
         }
 
-        // Ao encerrar o bloco da imagem atual, salta para uma nova linha antes de iniciar a próxima imagem
-        if (currentX > 0) {
+        // Se todas as cotas com número fixo se esgotaram, encerra
+        if (!foundValidItem) break;
+
+        const currentItem = imageItems[itemIndex];
+        const iW = currentItem.widthCm;
+        const iH = currentItem.heightCm;
+
+        // Se o item sozinho for maior que o painel, pula ele
+        if (iW > mW) {
+          itemIndex = (itemIndex + 1) % totalItems;
+          continue;
+        }
+
+        // Se não couber na linha atual, pula para a linha de baixo
+        if (currentX + iW > mW) {
           currentX = 0;
           currentY += rowMaxHeight + gap;
+          rowMaxHeight = 0;
         }
 
-        if (currentY >= mH) break;
+        // Se estoura a altura total do painel, encerra
+        if (currentY + iH > mH) {
+          break;
+        }
+
+        // Posiciona a imagem
+        placed.push({
+          x: currentX,
+          y: currentY,
+          w: iW,
+          h: iH,
+          imgObj: currentItem.file
+        });
+
+        // Abate da cota se não for infinito
+        if (currentItem.quantity > 0) {
+          remainingCounts[itemIndex]--;
+        }
+
+        if (iH > rowMaxHeight) {
+          rowMaxHeight = iH;
+        }
+
+        currentX += iW + gap;
+
+        // Avança para a próxima imagem da fila
+        itemIndex = (itemIndex + 1) % totalItems;
       }
 
       return placed;
@@ -465,7 +475,7 @@
         renderCanvas(exportCanvas, pW, pH, currentPlacedData, true);
 
         const link = document.createElement('a');
-        link.download = 'layout-alinhado-300dpi.png';
+        link.download = 'layout-proporcional-300dpi.png';
         link.href = exportCanvas.toDataURL('image/png');
         link.click();
 
@@ -498,7 +508,7 @@
         });
 
         pdf.addImage(imgData, 'PNG', 0, 0, pW, pH, '', 'FAST');
-        pdf.save('layout-alinhado-300dpi.pdf');
+        pdf.save('layout-proporcional-300dpi.pdf');
 
         document.getElementById('stats').innerText = "Download do PDF concluído!";
       }, 100);
@@ -506,4 +516,3 @@
   </script>
 </body>
 </html>
-
