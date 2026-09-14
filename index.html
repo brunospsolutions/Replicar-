@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
   <meta charset="UTF-8">
-  <title>Aproveitamento de Área - Preenchimento Sequencial Proporcional</title>
+  <title>Aproveitamento de Área - Modo Híbrido (Proporcional / Agrupado)</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
   <style>
     body {
@@ -126,7 +126,7 @@
 </head>
 <body>
 
-  <h2>Aproveitamento de Área - Preenchimento Sequencial Proporcional</h2>
+  <h2>Aproveitamento de Área - Inteligente (Sequencial / Agrupado)</h2>
 
   <div class="controls">
     <div class="input-group">
@@ -195,7 +195,7 @@
                 aspectRatio: aspectRatio,
                 widthCm: defaultW,
                 heightCm: defaultH,
-                quantity: 0 // 0 = Repetir sequencialmente até preencher o painel
+                quantity: 0 // 0 = Modo proporcional sequencial
               });
 
               renderImageList();
@@ -324,7 +324,16 @@
 
       if (!pW || !pH) return;
 
-      currentPlacedData = packSequentialRowByRow(pW, pH, gap);
+      // Verifica se alguma imagem possui quantidade definida maior que zero
+      const hasSpecificQuantities = imageItems.some(item => item.quantity > 0);
+
+      if (hasSpecificQuantities) {
+        // Se houver quantidades definidas, ativa o AGRUPAMENTO
+        currentPlacedData = packGroupedByQuantity(pW, pH, gap);
+      } else {
+        // Se todas forem 0, usa o modo SEQUENCIAL PROPORCIONAL
+        currentPlacedData = packSequentialRowByRow(pW, pH, gap);
+      }
 
       renderCanvas(document.getElementById('previewCanvas'), pW, pH, currentPlacedData, false);
 
@@ -339,64 +348,33 @@
         `Total de imagens encaixadas: ${currentPlacedData.length} unidade(s) | Aproveitamento da área: ${efficiency}%`;
     }
 
-    // Preenchimento sequencial proporcional por linha
+    // Algoritmo 1: Preenchimento Sequencial Proporcional (Quando Qtd = 0)
     function packSequentialRowByRow(mW, mH, gap) {
       let placed = [];
       let currentX = 0;
       let currentY = 0;
       let rowMaxHeight = 0;
-
-      // Cópia do controle de quantidades definidas pelo usuário
-      let remainingCounts = imageItems.map(item => item.quantity);
-
       let itemIndex = 0;
-      let totalItems = imageItems.length;
+      const totalItems = imageItems.length;
 
       while (currentY < mH) {
-        // Encontra o próximo item disponível na fila circular
-        let checkedCount = 0;
-        let foundValidItem = false;
-
-        while (checkedCount < totalItems) {
-          const item = imageItems[itemIndex];
-
-          // Se item é válido e ainda possui cota (ou é 0/infinito)
-          if (item.quantity === 0 || remainingCounts[itemIndex] > 0) {
-            foundValidItem = true;
-            break;
-          }
-
-          // Passa para o próximo
-          itemIndex = (itemIndex + 1) % totalItems;
-          checkedCount++;
-        }
-
-        // Se todas as cotas com número fixo se esgotaram, encerra
-        if (!foundValidItem) break;
-
         const currentItem = imageItems[itemIndex];
         const iW = currentItem.widthCm;
         const iH = currentItem.heightCm;
 
-        // Se o item sozinho for maior que o painel, pula ele
         if (iW > mW) {
           itemIndex = (itemIndex + 1) % totalItems;
           continue;
         }
 
-        // Se não couber na linha atual, pula para a linha de baixo
         if (currentX + iW > mW) {
           currentX = 0;
           currentY += rowMaxHeight + gap;
           rowMaxHeight = 0;
         }
 
-        // Se estoura a altura total do painel, encerra
-        if (currentY + iH > mH) {
-          break;
-        }
+        if (currentY + iH > mH) break;
 
-        // Posiciona a imagem
         placed.push({
           x: currentX,
           y: currentY,
@@ -405,19 +383,55 @@
           imgObj: currentItem.file
         });
 
-        // Abate da cota se não for infinito
-        if (currentItem.quantity > 0) {
-          remainingCounts[itemIndex]--;
-        }
-
-        if (iH > rowMaxHeight) {
-          rowMaxHeight = iH;
-        }
-
+        if (iH > rowMaxHeight) rowMaxHeight = iH;
         currentX += iW + gap;
-
-        // Avança para a próxima imagem da fila
         itemIndex = (itemIndex + 1) % totalItems;
+      }
+
+      return placed;
+    }
+
+    // Algoritmo 2: Agrupamento em Bloco Contínuo (Quando Qtd > 0)
+    function packGroupedByQuantity(mW, mH, gap) {
+      let placed = [];
+      let currentX = 0;
+      let currentY = 0;
+      let rowMaxHeight = 0;
+
+      for (let i = 0; i < imageItems.length; i++) {
+        const item = imageItems[i];
+        const iW = item.widthCm;
+        const iH = item.heightCm;
+        const targetQty = item.quantity;
+
+        if (iW > mW || iH > mH) continue;
+
+        let count = 0;
+
+        // Se targetQty for 0 mas houver outros com Qtd > 0, vai ate estourar
+        while (targetQty === 0 || count < targetQty) {
+          if (currentX + iW > mW) {
+            currentX = 0;
+            currentY += rowMaxHeight + gap;
+            rowMaxHeight = 0;
+          }
+
+          if (currentY + iH > mH) break;
+
+          placed.push({
+            x: currentX,
+            y: currentY,
+            w: iW,
+            h: iH,
+            imgObj: item.file
+          });
+
+          count++;
+          if (iH > rowMaxHeight) rowMaxHeight = iH;
+          currentX += iW + gap;
+        }
+
+        if (currentY >= mH) break;
       }
 
       return placed;
@@ -475,7 +489,7 @@
         renderCanvas(exportCanvas, pW, pH, currentPlacedData, true);
 
         const link = document.createElement('a');
-        link.download = 'layout-proporcional-300dpi.png';
+        link.download = 'layout-300dpi.png';
         link.href = exportCanvas.toDataURL('image/png');
         link.click();
 
@@ -508,7 +522,7 @@
         });
 
         pdf.addImage(imgData, 'PNG', 0, 0, pW, pH, '', 'FAST');
-        pdf.save('layout-proporcional-300dpi.pdf');
+        pdf.save('layout-300dpi.pdf');
 
         document.getElementById('stats').innerText = "Download do PDF concluído!";
       }, 100);
