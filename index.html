@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
   <meta charset="UTF-8">
-  <title>Aproveitamento de Área - Alinhamento para Corte & Auto-Crop (300 DPI)</title>
+  <title>Aproveitamento de Área - Alinhamento de Corte Corrigido</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
   <style>
     body {
@@ -126,7 +126,7 @@
 </head>
 <body>
 
-  <h2>Aproveitamento de Área - Alinhamento para Corte & Auto-Crop</h2>
+  <h2>Aproveitamento de Área - Alinhamento de Corte por Grupos</h2>
 
   <div class="controls">
     <div class="input-group">
@@ -147,7 +147,7 @@
     </div>
 
     <div class="image-list-container">
-      <strong>Fila de Arquivos Carregados (Imagens são alinhadas em grupos para facilitar o corte):</strong>
+      <strong>Fila de Arquivos Carregados (Imagens são agrupadas em blocos alinhados):</strong>
       <div id="imageList" style="margin-top: 10px;">
         <span style="color: #777; font-size: 0.9em;">Nenhuma imagem adicionada.</span>
       </div>
@@ -180,7 +180,7 @@
         reader.onload = function(event) {
           const rawImg = new Image();
           rawImg.onload = function() {
-            // Aplica Auto-Crop das bordas transparentes
+            // Recorta bordas transparentes excedentes
             const croppedCanvas = cropTransparentEdges(rawImg);
             const croppedImg = new Image();
             croppedImg.onload = function() {
@@ -195,7 +195,7 @@
                 aspectRatio: aspectRatio,
                 widthCm: defaultW,
                 heightCm: defaultH,
-                quantity: 0 // 0 = Repetir infinitamente até preencher o painel
+                quantity: 0 // 0 = Distribuir equilibrado com as outras imagens
               });
 
               renderImageList();
@@ -210,7 +210,6 @@
       this.value = '';
     });
 
-    // Função que remove a borda transparente excedente do PNG
     function cropTransparentEdges(img) {
       const tempCanvas = document.createElement('canvas');
       tempCanvas.width = img.width;
@@ -227,7 +226,7 @@
       for (let y = 0; y < img.height; y++) {
         for (let x = 0; x < img.width; x++) {
           const alpha = data[(y * img.width + x) * 4 + 3];
-          if (alpha > 0) { // Encontrou pixel visível
+          if (alpha > 0) {
             if (x < minX) minX = x;
             if (x > maxX) maxX = x;
             if (y < minY) minY = y;
@@ -237,7 +236,6 @@
         }
       }
 
-      // Se a imagem for totalmente transparente ou erro, retorna original
       if (!foundPixel) return tempCanvas;
 
       const cropW = maxX - minX + 1;
@@ -275,7 +273,7 @@
             <input type="number" value="${item.heightCm.toFixed(2)}" step="0.1" min="0.1" onchange="updateItemHeight(${index}, this.value)">
           </div>
           <div class="input-group">
-            <label style="font-size:0.75em;">Qtd (0 = Infinito):</label>
+            <label style="font-size:0.75em;">Qtd (0 = Automático):</label>
             <input type="number" value="${item.quantity}" min="0" onchange="updateItemQuantity(${index}, this.value)">
           </div>
           <button class="remove-btn" onclick="removeItem(${index})">X</button>
@@ -284,7 +282,6 @@
       });
     }
 
-    // Atualização Proporcional Bidirecional
     function updateItemWidth(index, val) {
       const w = parseFloat(val);
       if (w && w > 0) {
@@ -342,33 +339,48 @@
         `Total de imagens encaixadas: ${currentPlacedData.length} unidade(s) | Aproveitamento da área: ${efficiency}%`;
     }
 
-    // Algoritmo que Agrupa Imagens Iguais Lado a Lado / Alinhadas por Bloco
+    // Algoritmo de Agrupamento Corrigido
     function packGroupedByImage(mW, mH, gap) {
       let placed = [];
       let currentX = 0;
       let currentY = 0;
-      let rowMaxHeight = 0;
+
+      // Conta quantas imagens estão marcadas com quantidade 0 (automático/proporcional)
+      const autoItemsCount = imageItems.filter(item => item.quantity === 0).length;
 
       for (let itemIdx = 0; itemIdx < imageItems.length; itemIdx++) {
         const item = imageItems[itemIdx];
         const iW = item.widthCm;
         const iH = item.heightCm;
 
-        if (iW > mW || iH > mH) continue; // Pula se o item for maior que o próprio painel
+        if (iW > mW || iH > mH) continue; // Pula se a imagem for maior que o painel
 
         let placedCount = 0;
-        const targetCount = item.quantity; // 0 significa ilimitado (preenche o máximo possível)
+        let rowMaxHeight = 0;
 
-        while (targetCount === 0 || placedCount < targetCount) {
-          // Se não couber na linha atual, pula para a linha de baixo
+        // Se a quantidade for 0, calcula o limite de linhas por tipo para dividirem a folha igualmente
+        let targetCount = item.quantity;
+        let maxYForThisItem = mH;
+
+        if (targetCount === 0 && autoItemsCount > 1) {
+          // Reserva uma fração equivalente da altura total para cada imagem automática
+          const allocatedHeightPerGroup = (mH - currentY) / (autoItemsCount - itemIdx);
+          maxYForThisItem = currentY + allocatedHeightPerGroup;
+        }
+
+        while (true) {
+          // Se houver limite numérico de quantidade e já atingiu, encerra este grupo
+          if (targetCount > 0 && placedCount >= targetCount) break;
+
+          // Se não couber na largura da linha atual, salta para a linha seguinte
           if (currentX + iW > mW) {
             currentX = 0;
             currentY += rowMaxHeight + gap;
             rowMaxHeight = 0;
           }
 
-          // Se estourar a altura do painel, passa para a próxima imagem ou encerra
-          if (currentY + iH > mH) {
+          // Se ultrapassar a altura reservada para esta imagem ou o limite do painel, encerra
+          if (currentY + iH > maxYForThisItem || currentY + iH > mH) {
             break;
           }
 
@@ -389,11 +401,10 @@
           currentX += iW + gap;
         }
 
-        // Ao terminar um grupo de imagens iguais, pula para uma nova linha para manter o alinhamento de corte limpo
+        // Ao encerrar o bloco da imagem atual, salta para uma nova linha antes de iniciar a próxima imagem
         if (currentX > 0) {
           currentX = 0;
           currentY += rowMaxHeight + gap;
-          rowMaxHeight = 0;
         }
 
         if (currentY >= mH) break;
@@ -495,8 +506,4 @@
   </script>
 </body>
 </html>
-
-
-
-
 
