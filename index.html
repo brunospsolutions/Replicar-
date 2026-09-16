@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
   <meta charset="UTF-8">
-  <title>Aproveitamento de Área - Otimizador Inteligente com Rotação (300 DPI)</title>
+  <title>Aproveitamento de Área - Grandes Formatos (Suporta 2m+)</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
   <style>
     body {
@@ -126,7 +126,7 @@
 </head>
 <body>
 
-  <h2>Aproveitamento Máximo de Área - Bin Packing com Rotação (300 DPI)</h2>
+  <h2>Aproveitamento de Área - Otimizado para Grandes Formatos (2m+)</h2>
 
   <div class="controls">
     <div class="input-group">
@@ -135,11 +135,11 @@
     </div>
     <div class="input-group">
       <label>Largura do Painel (cm):</label>
-      <input type="number" id="panelW" value="100" min="1">
+      <input type="number" id="panelW" value="200" min="1">
     </div>
     <div class="input-group">
       <label>Altura do Painel (cm):</label>
-      <input type="number" id="panelH" value="100" min="1">
+      <input type="number" id="panelH" value="200" min="1">
     </div>
     <div class="input-group">
       <label>Espaçamento entre imagens (cm):</label>
@@ -148,8 +148,8 @@
     <div class="input-group">
       <label>Permitir Rotação Individual (90°):</label>
       <select id="allowRotation">
-        <option value="yes">Sim (Recomendado para máximo uso)</option>
-        <option value="no">Não (Manter orientação original)</option>
+        <option value="yes">Sim (Aproveitamento Máximo)</option>
+        <option value="no">Não (Orientação Original)</option>
       </select>
     </div>
 
@@ -161,9 +161,9 @@
     </div>
 
     <div class="button-group">
-      <button onclick="calculateAndDraw()">1. Otimizar e Visualizar Layout</button>
-      <button class="export-btn" onclick="exportPNG()">2. Baixar PNG (300 DPI)</button>
-      <button class="export-btn" onclick="exportPDF()">3. Baixar PDF (300 DPI)</button>
+      <button onclick="calculateAndDraw()">1. Calcular e Visualizar Layout</button>
+      <button class="export-btn" onclick="exportPNG()">2. Baixar PNG</button>
+      <button class="export-btn" onclick="exportPDF()">3. Baixar PDF</button>
     </div>
   </div>
 
@@ -176,7 +176,9 @@
   <script>
     let imageItems = [];
     let currentPlacedData = [];
-    const DPI_300_PX_PER_CM = 300 / 2.54;
+
+    // Limite máximo seguro de pixels de dimensão suportado por Canvas nos navegadores (10.000px é seguro para até 2,5m a 3m)
+    const MAX_CANVAS_PIXELS = 10000;
 
     document.getElementById('imageInput').addEventListener('change', function(e) {
       const files = Array.from(e.target.files);
@@ -346,16 +348,14 @@
         `Total de imagens encaixadas: ${currentPlacedData.length} unidade(s) | Aproveitamento da área: ${efficiency}%`;
     }
 
-    // Algoritmo Guilhotina 2D com Otimização de Lacunas e Rotação 90°
     function packMaxEfficiency(mW, mH, gap, allowRotation) {
       let freeRects = [{ x: 0, y: 0, w: mW, h: mH }];
       let placed = [];
 
-      // Constrói lista de itens a serem posicionados
       let itemsToPack = [];
       let counts = imageItems.map(item => item.quantity);
       let loopCounter = 0;
-      let maxLoop = 10000; // Limite de segurança
+      let maxLoop = 5000;
 
       while (loopCounter < maxLoop) {
         let addedInThisPass = 0;
@@ -373,12 +373,10 @@
           }
         }
         if (addedInThisPass === 0) break;
-        // Se todas as imagens forem infinitas (quantity=0), roda o bastante para preencher
-        if (imageItems.every(item => item.quantity === 0) && itemsToPack.length > 500) break;
+        if (imageItems.every(item => item.quantity === 0) && itemsToPack.length > 300) break;
         loopCounter++;
       }
 
-      // Processa cada item procurando a melhor lacuna (Best Short Side Fit)
       for (let k = 0; k < itemsToPack.length; k++) {
         const item = itemsToPack[k];
         let bestRectIdx = -1;
@@ -388,7 +386,6 @@
         for (let i = 0; i < freeRects.length; i++) {
           let rect = freeRects[i];
 
-          // Testa sem rotação
           if (item.w <= rect.w && item.h <= rect.h) {
             let leftover = Math.min(rect.w - item.w, rect.h - item.h);
             if (leftover < bestShortSideFit) {
@@ -398,7 +395,6 @@
             }
           }
 
-          // Testa com rotação 90° (se permitido)
           if (allowRotation && item.h <= rect.w && item.w <= rect.h) {
             let leftover = Math.min(rect.w - item.h, rect.h - item.w);
             if (leftover < bestShortSideFit) {
@@ -409,7 +405,6 @@
           }
         }
 
-        // Se encontrou espaço livre adequado
         if (bestRectIdx !== -1) {
           let target = freeRects.splice(bestRectIdx, 1)[0];
           let actualW = bestRotated ? item.h : item.w;
@@ -424,7 +419,6 @@
             imgObj: item.itemObj.file
           });
 
-          // Subdivide a área restante em retângulos menores (Direita e Abaixo)
           let rightSpace = {
             x: target.x + actualW + gap,
             y: target.y,
@@ -442,7 +436,6 @@
           if (rightSpace.w > 0 && rightSpace.h > 0) freeRects.push(rightSpace);
           if (bottomSpace.w > 0 && bottomSpace.h > 0) freeRects.push(bottomSpace);
 
-          // Ordena espaços livres para priorizar o preenchimento dos cantos mais altos
           freeRects.sort((a, b) => a.y - b.y || a.x - b.x);
         }
       }
@@ -450,6 +443,7 @@
       return placed;
     }
 
+    // Renderização com Cálculo Dinâmico de Escala
     function renderCanvas(canvas, pW, pH, placedItems, isExporting = false) {
       const ctx = canvas.getContext('2d');
       
@@ -458,7 +452,16 @@
         const maxCanvasDim = 800;
         scale = Math.min(maxCanvasDim / pW, maxCanvasDim / pH);
       } else {
-        scale = DPI_300_PX_PER_CM;
+        // Para exportação, calcula a maior escala de DPI que não estoure o limite de 10.000 pixels do navegador
+        const targetDpiScale = (300 / 2.54); // 300 DPI ideal (~118 px/cm)
+        const maxDimCm = Math.max(pW, pH);
+        
+        if (maxDimCm * targetDpiScale > MAX_CANVAS_PIXELS) {
+          // Ajusta a escala para caber exatamente no limite seguro de hardware do navegador
+          scale = MAX_CANVAS_PIXELS / maxDimCm;
+        } else {
+          scale = targetDpiScale;
+        }
       }
 
       canvas.width = pW * scale;
@@ -496,7 +499,7 @@
         return;
       }
 
-      document.getElementById('stats').innerText = "Processando imagem em alta resolução (300 DPI)... Aguarde um instante.";
+      document.getElementById('stats').innerText = "Processando imagem em alta resolução... Aguarde um instante.";
 
       setTimeout(() => {
         const pW = parseFloat(document.getElementById('panelW').value);
@@ -506,11 +509,11 @@
         renderCanvas(exportCanvas, pW, pH, currentPlacedData, true);
 
         const link = document.createElement('a');
-        link.download = 'layout-otimizado-300dpi.png';
+        link.download = 'layout-grandes-formatos.png';
         link.href = exportCanvas.toDataURL('image/png');
         link.click();
 
-        document.getElementById('stats').innerText = "Download concluído com sucesso!";
+        document.getElementById('stats').innerText = "Download do PNG concluído com sucesso!";
       }, 100);
     }
 
@@ -520,7 +523,7 @@
         return;
       }
 
-      document.getElementById('stats').innerText = "Gerando PDF em alta resolução (300 DPI)... Aguarde um instante.";
+      document.getElementById('stats').innerText = "Gerando PDF... Aguarde um instante.";
 
       setTimeout(() => {
         const pW = parseFloat(document.getElementById('panelW').value);
@@ -539,7 +542,7 @@
         });
 
         pdf.addImage(imgData, 'PNG', 0, 0, pW, pH, '', 'FAST');
-        pdf.save('layout-otimizado-300dpi.pdf');
+        pdf.save('layout-grandes-formatos.pdf');
 
         document.getElementById('stats').innerText = "Download do PDF concluído!";
       }, 100);
